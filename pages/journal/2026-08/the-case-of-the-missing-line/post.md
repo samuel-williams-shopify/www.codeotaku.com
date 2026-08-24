@@ -231,7 +231,7 @@ Targeted benchmarks concentrated the affected pattern until nearly every iterati
 <table class="basic">
 	<thead>
 		<tr>
-			<th>Targeted benchmark</th>
+			<th>Interpreter benchmark</th>
 			<th>Baseline</th>
 			<th>Patched</th>
 			<th>Change</th>
@@ -239,17 +239,36 @@ Targeted benchmarks concentrated the affected pattern until nearly every iterati
 	</thead>
 	<tbody>
 		<tr>
-			<td>Hot affected edge, interpreter</td>
+			<td>Hot affected edge</td>
 			<td>46.20M iter/s</td>
 			<td>45.74M iter/s</td>
 			<td>−1.0%</td>
 		</tr>
 		<tr>
-			<td>Guarded reader, interpreter</td>
+			<td>Guarded reader</td>
 			<td>30.95M calls/s</td>
 			<td>30.13M calls/s</td>
 			<td>−2.7%</td>
 		</tr>
+	</tbody>
+</table>
+
+“Larger than I expected,” I admitted. “Should we accept incorrect tracing to keep the optimization?”
+
+“You offer a false choice. Must every execution engine preserve the jump in the same form?”
+
+YJIT and ZJIT operate after the bytecode has preserved its event semantics. YJIT can place the target block next and emit no machine jump; ZJIT can clean the redundant chain from its control-flow graph.
+
+<table class="basic">
+	<thead>
+		<tr>
+			<th>JIT benchmark</th>
+			<th>Baseline</th>
+			<th>Patched</th>
+			<th>Change</th>
+		</tr>
+	</thead>
+	<tbody>
 		<tr>
 			<td>Guarded reader, YJIT</td>
 			<td>272.56M calls/s</td>
@@ -265,11 +284,7 @@ Targeted benchmarks concentrated the affected pattern until nearly every iterati
 	</tbody>
 </table>
 
-“Larger than I expected,” I admitted. “Should we accept incorrect tracing to keep the optimization?”
-
-“You offer a false choice. Must every execution engine preserve the jump in the same form?”
-
-YJIT and ZJIT operate after the bytecode has preserved its event semantics. YJIT can place the target block next and emit no machine jump; ZJIT can clean the redundant chain from its control-flow graph. The guarded-reader benchmark showed no repeatable JIT regression.
+The guarded-reader results showed no repeatable JIT regression.
 
 The division of responsibility became clear: bytecode remains complete for the interpreter and instrumentation, while a JIT may reorganize machine control flow without discarding promised observations.
 
