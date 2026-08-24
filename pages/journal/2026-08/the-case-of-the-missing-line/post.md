@@ -292,22 +292,6 @@ The division of responsibility became clear: bytecode remains complete for the i
 
 “Not with a JIT. Preserve the evidence in bytecode; optimize the redundant jump in machine code.”
 
-## Chapter VII: Testing the Witness, Not Merely the Result
-
-Our original program had always returned the correct result. A conventional assertion could therefore pass before and after the fix.
-
-“How do we prevent the line from disappearing again?” I asked.
-
-“Ask the witness whose testimony was wrong.”
-
-The regression tests enabled <code class="language-ruby">TracePoint.new(:line)</code> and asserted that the loop-condition event appeared before the body event. One used the minimal <code class="language-ruby">while true</code> example; another used the realistic <code class="language-ruby">while chunk = super</code> predicate.
-
-“So the test does not merely prove what the program computes,” I said. “It proves what Ruby promises tools they can observe.”
-
-“Exactly. Instrumented runtimes have more than one audience.”
-
-Two executions may return the same value yet differ in debugger steps, coverage, trace events, stack metadata, or profiling samples. When those observations form a supported API, result-only testing cannot establish correctness.
-
 ## Epilogue: The Meaning of Equivalent
 
 “I called the optimized routes equivalent because they reached the same destination,” I reflected.
