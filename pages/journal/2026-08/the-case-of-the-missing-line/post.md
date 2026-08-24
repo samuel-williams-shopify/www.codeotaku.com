@@ -55,11 +55,13 @@ The loop condition called <code class="language-ruby">super</code>, assigned its
 
 <code class="language-ruby">TracePoint</code> allows debuggers, tracers, profilers, and diagnostic tools to observe events inside Ruby execution. A <code class="language-ruby">:line</code> event does not fire for every subexpression. It marks the source lines which Ruby's compiled instruction sequence identifies as execution points.
 
+CRuby compiles Ruby source into YARV instructions. Selected instructions carry event flags which tell the interpreter when to notify TracePoint.
+
 “Then perhaps line two simply is not such a point.”
 
 “How shall we distinguish a line which was never marked from one whose mark was overlooked?” Holmes asked.
 
-“Ask the compiled program,” I replied, and printed its YARV disassembly. The relevant instructions were:
+“Ask the compiled program,” I replied, and disassembled the original three-line reproduction. The relevant instructions were:
 
 ```text
 0005 branchunless 15
@@ -78,20 +80,18 @@ I followed its target. “Directly to <code>0015</code>. The event-bearing instr
 
 “Then our evidence was neither absent nor destroyed,” Holmes said. “The program was routed around the place where it would have been reported.”
 
-That mapping is part of the tooling contract. Developers rely on it to step through methods, explain which branches ran, and connect runtime behavior to source. Coverage consumes related metadata, but an ordinary TracePoint user does not necessarily enable coverage.
+That mapping is part of the tooling contract. Developers rely on it to step through methods, explain which branches ran, and connect runtime behavior to source.
 
-The question therefore moved down one level: how had the branch acquired a destination beyond the event-bearing jump?
+“The disassembly shows us the altered route,” Holmes said. “Now let us ask the compiler who altered it.”
 
 ## Chapter III: The Shortened Route
 
-CRuby compiles Ruby source into YARV instructions. Event flags attached to selected instructions tell the interpreter when to notify TracePoint and Coverage.
-
-Holmes sketched the relevant control flow:
+We found the relevant transformation in CRuby's peephole optimizer. Holmes sketched the route before and after it retargeted the branch:
 
 <figure class="diagram inline-diagram">
 <svg viewBox="0 0 760 510" role="img" aria-labelledby="missing-line-title missing-line-description">
 	<title id="missing-line-title">Control flow before and after jump-to-jump optimization</title>
-	<desc id="missing-line-description">Before optimization, a conditional branch reaches the loop body through a jump carrying the line event. After optimization, the branch targets the loop body directly and the line event is not transferred.</desc>
+	<desc id="missing-line-description">On the original route, a conditional branch reaches the loop body through a jump carrying the line event. On the retargeted route, the branch targets the loop body directly and the line event is not transferred.</desc>
 	<defs>
 		<marker id="missing-line-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
 			<path class="diagram-marker-accent" d="M 0 0 L 10 5 L 0 10 z"/>
@@ -100,7 +100,7 @@ Holmes sketched the relevant control flow:
 
 	<rect class="diagram-surface" x="10" y="10" width="740" height="490" rx="24"/>
 
-	<text class="diagram-heading" x="380" y="55">Before optimization</text>
+	<text class="diagram-heading" x="380" y="55">Original route</text>
 
 	<rect class="diagram-node" x="40" y="90" width="190" height="100" rx="14"/>
 	<g class="diagram-copy" transform="translate(135 140)">
@@ -125,7 +125,7 @@ Holmes sketched the relevant control flow:
 
 	<path class="diagram-connector" d="M 55 240 L 705 240" style="stroke: var(--diagram-border); opacity: 0.5"/>
 
-	<text class="diagram-heading" x="380" y="295">After optimization</text>
+	<text class="diagram-heading" x="380" y="295">Retargeted route</text>
 
 	<rect class="diagram-node" x="40" y="330" width="190" height="100" rx="14"/>
 	<g class="diagram-copy" transform="translate(135 380)">
@@ -163,7 +163,13 @@ Holmes sketched the relevant control flow:
 
 ## Chapter IV: The Coverage Alibi
 
-We enabled line coverage. To my surprise, line two reappeared.
+“What other witness relies on Ruby's mapping between execution and source lines?” Holmes asked.
+
+“Ruby's built-in line coverage.”
+
+We enabled Coverage and ran the same program. To my surprise, line two reappeared.
+
+TracePoint and Coverage use distinct line-event flags, but both depend on event metadata attached to YARV instructions.
 
 “Then TracePoint is broken, but Coverage is not?” I asked.
 
@@ -187,7 +193,11 @@ An [earlier proposal](https://github.com/ruby/ruby/pull/17825) explored represen
 
 “It also asks the interpreter and JITs to understand new metadata,” Holmes replied. “Before adding machinery, what is the smallest rule which preserves the evidence?”
 
-The answer was to retain the existing intermediate jump whenever removing it would erase a line event. [The merged fix](https://github.com/ruby/ruby/pull/18122) changed the peephole condition to stop this specific retargeting when the skipped instruction carries <code class="language-c">RUBY_EVENT_LINE</code> or <code class="language-c">RUBY_EVENT_COVERAGE_LINE</code>:
+“Could we simply refuse this retargeting when the intermediate jump carries a line event?” I asked.
+
+“Then ordinary jump chains remain folded, and we require no new VM metadata.”
+
+[The merged fix](https://github.com/ruby/ruby/pull/18122) implemented that rule. It stops this specific retargeting when bypassing an instruction carrying <code class="language-c">RUBY_EVENT_LINE</code> or <code class="language-c">RUBY_EVENT_COVERAGE_LINE</code> would suppress the event:
 
 ```c
 int stop_optimization =
@@ -216,35 +226,71 @@ With that route restored, the original program produced the expected trace:
 
 Holmes raised an eyebrow. “That is an opinion, not a measurement.”
 
-Targeted benchmarks concentrated the affected pattern until nearly every iteration or method call traversed the retained jump. The interpreter slowed by about one percent in a hot loop and 2.7 percent in a minimal guarded reader.
+Targeted benchmarks concentrated the affected pattern until nearly every iteration or method call traversed the retained jump. On an Apple M4 Pro, each result was the median of 9 or 11 samples after 3 warmups:
+
+<table class="basic">
+	<thead>
+		<tr>
+			<th>Interpreter benchmark</th>
+			<th>Baseline</th>
+			<th>Patched</th>
+			<th>Change</th>
+		</tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>Hot affected edge</td>
+			<td>46.20M iter/s</td>
+			<td>45.74M iter/s</td>
+			<td>−1.0%</td>
+		</tr>
+		<tr>
+			<td>Guarded reader</td>
+			<td>30.95M calls/s</td>
+			<td>30.13M calls/s</td>
+			<td>−2.7%</td>
+		</tr>
+	</tbody>
+</table>
 
 “Larger than I expected,” I admitted. “Should we accept incorrect tracing to keep the optimization?”
 
 “You offer a false choice. Must every execution engine preserve the jump in the same form?”
 
-YJIT and ZJIT operate after the bytecode has preserved its event semantics. YJIT can place the target block next and emit no machine jump; ZJIT can clean the redundant chain from its control-flow graph. The guarded-reader benchmark showed no repeatable JIT regression.
+YJIT and ZJIT operate after the bytecode has preserved its event semantics. YJIT can place the target block next and emit no machine jump; ZJIT can clean the redundant chain from its control-flow graph.
+
+<table class="basic">
+	<thead>
+		<tr>
+			<th>JIT benchmark</th>
+			<th>Baseline</th>
+			<th>Patched</th>
+			<th>Change</th>
+		</tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>Guarded reader, YJIT</td>
+			<td>272.56M calls/s</td>
+			<td>272.56M calls/s</td>
+			<td>0.0%</td>
+		</tr>
+		<tr>
+			<td>Guarded reader, ZJIT</td>
+			<td>435.34M calls/s</td>
+			<td>436.89M calls/s</td>
+			<td>+0.4%</td>
+		</tr>
+	</tbody>
+</table>
+
+The guarded-reader results showed no repeatable JIT regression.
 
 The division of responsibility became clear: bytecode remains complete for the interpreter and instrumentation, while a JIT may reorganize machine control flow without discarding promised observations.
 
-“Then the interpreter figures are real but deliberately concentrated upper bounds,” I said, “not an estimate of general application slowdown.”
+“Then we need not choose between correct tracing and performance,” I said.
 
-“Precisely. Neither hide the cost nor exaggerate its reach.”
-
-## Chapter VII: Testing the Witness, Not Merely the Result
-
-Our original program had always returned the correct result. A conventional assertion could therefore pass before and after the fix.
-
-“How do we prevent the line from disappearing again?” I asked.
-
-“Ask the witness whose testimony was wrong.”
-
-The regression tests enabled <code class="language-ruby">TracePoint.new(:line)</code> and asserted that the loop-condition event appeared before the body event. One used the minimal <code class="language-ruby">while true</code> example; another used the realistic <code class="language-ruby">while chunk = super</code> predicate.
-
-“So the test does not merely prove what the program computes,” I said. “It proves what Ruby promises tools they can observe.”
-
-“Exactly. Instrumented runtimes have more than one audience.”
-
-Two executions may return the same value yet differ in debugger steps, coverage, trace events, stack metadata, or profiling samples. When those observations form a supported API, result-only testing cannot establish correctness.
+“Not with a JIT. Preserve the evidence in bytecode; optimize the redundant jump in machine code.”
 
 ## Epilogue: The Meaning of Equivalent
 
