@@ -60,26 +60,76 @@ end</content:listing>
 	
 	<p>Holmes sketched the relevant control flow:</p>
 	
-	<content:listing brush="text">conditional branch -&gt; jump carrying line-two event
-jump carrying event -&gt; loop body</content:listing>
+	<figure class="diagram inline-diagram">
+		<svg viewBox="0 0 760 510" role="img" aria-labelledby="missing-line-title missing-line-description">
+			<title id="missing-line-title">Control flow before and after jump-to-jump optimization</title>
+			<desc id="missing-line-description">Before optimization, a conditional branch reaches the loop body through a jump carrying the line event. After optimization, the branch targets the loop body directly and the line event is not transferred.</desc>
+			<defs>
+				<marker id="missing-line-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+					<path class="diagram-marker-accent" d="M 0 0 L 10 5 L 0 10 z" />
+				</marker>
+			</defs>
+			
+			<rect class="diagram-surface" x="10" y="10" width="740" height="490" rx="24" />
+			
+			<text class="diagram-heading" x="380" y="55">Before optimization</text>
+			
+			<rect class="diagram-node" x="40" y="90" width="190" height="100" rx="14" />
+			<g class="diagram-copy" transform="translate(135 140)">
+				<text class="diagram-text" x="0" y="0">conditional branch</text>
+			</g>
+			
+			<path class="diagram-connector diagram-connector-accent" d="M 230 140 L 280 140" marker-end="url(#missing-line-arrow)" />
+			
+			<rect class="diagram-node diagram-node-positive" x="285" y="90" width="190" height="100" rx="14" />
+			<g class="diagram-copy" transform="translate(380 140)">
+				<text class="diagram-text" x="0" y="-22">jump</text>
+				<text class="diagram-code diagram-positive" x="0" y="8">RUBY_EVENT_LINE</text>
+				<text class="diagram-muted" x="0" y="34">emits line 2</text>
+			</g>
+			
+			<path class="diagram-connector diagram-connector-accent" d="M 475 140 L 525 140" marker-end="url(#missing-line-arrow)" />
+			
+			<rect class="diagram-node" x="530" y="90" width="190" height="100" rx="14" />
+			<g class="diagram-copy" transform="translate(625 140)">
+				<text class="diagram-text" x="0" y="0">loop body</text>
+			</g>
+			
+			<path class="diagram-connector" d="M 55 240 L 705 240" style="stroke: var(--diagram-border); opacity: 0.5" />
+			
+			<text class="diagram-heading" x="380" y="295">After optimization</text>
+			
+			<rect class="diagram-node" x="40" y="330" width="190" height="100" rx="14" />
+			<g class="diagram-copy" transform="translate(135 380)">
+				<text class="diagram-text" x="0" y="0">conditional branch</text>
+			</g>
+			
+			<path class="diagram-connector diagram-connector-accent" d="M 230 380 L 525 380" marker-end="url(#missing-line-arrow)" />
+			
+			<rect class="diagram-node" x="530" y="330" width="190" height="100" rx="14" />
+			<g class="diagram-copy" transform="translate(625 380)">
+				<text class="diagram-text" x="0" y="0">loop body</text>
+			</g>
+			
+			<text class="diagram-muted" x="380" y="455">branch retargeted; event not transferred</text>
+			<text class="diagram-text diagram-terminal" x="380" y="480">line 2 is never emitted</text>
+		</svg>
+		<figcaption>The optimizer preserves the destination while bypassing the instruction that reports line two.</figcaption>
+	</figure>
 	
-	<p>“A branch leading to a jump,” I said. “The compiler can point the branch directly at the loop body.”</p>
+	<p>“A conditional branch leading to an unconditional jump,” I said. “The optimizer can retarget the branch to the jump’s destination and remove the intermediate instruction.”</p>
 	
 	<p>“And ordinarily it should. What do we call that?”</p>
 	
-	<p>“Jump-to-jump peephole optimization.”</p>
+	<p>“Jump-to-jump peephole optimization. The destination and resulting values remain unchanged.”</p>
 	
-	<p>The shortened route was:</p>
+	<p>“The optimizer does not move the line event to the new edge,” Holmes said. “It merely retargets the conditional branch from the intermediate jump to the loop body.”</p>
 	
-	<content:listing brush="text">conditional branch -&gt; loop body</content:listing>
+	<p>“So the instruction it removes is operationally redundant, but observationally significant.”</p>
 	
-	<p>“The destination is unchanged,” I said. “So the optimization preserves program behavior.”</p>
+	<p>“Precisely. It performs no necessary control-flow work, yet it is the point at which Ruby promises to report line two.”</p>
 	
-	<p>“Which behavior?” Holmes asked.</p>
-	
-	<p>I saw the omission. The resulting values and control flow were equivalent, but execution no longer visited the intermediate instruction carrying the line event. To the program, the road was shorter. To an observer mapping the journey, a signpost had vanished.</p>
-	
-	<p>“An optimization can preserve the answer while changing what an instrumentation API observes,” I said.</p>
+	<p>“Then the optimization preserves the program’s answer while changing what an instrumentation API observes,” I said.</p>
 	
 	<p>“And if observation is part of the supported semantics, the compiler must preserve that too.”</p>
 	
