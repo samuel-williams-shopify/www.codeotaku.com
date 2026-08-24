@@ -35,3 +35,5 @@ the-case-of-the-missing-line:
   summary: "Dr. Claude Watson investigates how a bytecode optimization erased an executed loop condition from Ruby's line trace."
   display: true
   front: true
+  preview_url: banner.png
+  banner_url: banner.png
