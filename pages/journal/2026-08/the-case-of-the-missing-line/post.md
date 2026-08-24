@@ -57,11 +57,30 @@ The loop condition called <code class="language-ruby">super</code>, assigned its
 
 “Then perhaps line two simply is not such a point.”
 
-Holmes indicated the loop condition. “A debugger stepping through <code class="language-ruby">while chunk = super</code> must be able to associate that call and assignment with its source line. More decisively, Ruby's own compiler attached a line event to the bytecode for it. The event existed before optimization.”
+“How shall we distinguish a line which was never marked from one whose mark was overlooked?” Holmes asked.
+
+“Ask the compiled program,” I replied, and printed its YARV disassembly. The relevant instructions were:
+
+```text
+0005 branchunless 15
+...
+0011 jump 15             (2)[Li]
+0015 putnil              (3)[Li]
+```
+
+“The <code>[Li]</code> marker denotes a line event,” Holmes said. “What does the instruction at <code>0011</code> tell you?”
+
+“Ruby did mark line two. Its event is attached to that jump.”
+
+“And where does the conditional branch at <code>0005</code> lead?”
+
+I followed its target. “Directly to <code>0015</code>. The event-bearing instruction remains in the sequence, but execution from the guard passes over it.”
+
+“Then our evidence was neither absent nor destroyed,” Holmes said. “The program was routed around the place where it would have been reported.”
 
 That mapping is part of the tooling contract. Developers rely on it to step through methods, explain which branches ran, and connect runtime behavior to source. Coverage consumes related metadata, but an ordinary TracePoint user does not necessarily enable coverage.
 
-The question therefore moved down one level: where had the event-bearing instruction gone?
+The question therefore moved down one level: how had the branch acquired a destination beyond the event-bearing jump?
 
 ## Chapter III: The Shortened Route
 
@@ -126,7 +145,7 @@ Holmes sketched the relevant control flow:
 <figcaption>The optimizer preserves the destination while bypassing the instruction that reports line two.</figcaption>
 </figure>
 
-“A conditional branch leading to an unconditional jump,” I said. “The optimizer can retarget the branch to the jump's destination and remove the intermediate instruction.”
+“A conditional branch leading to an unconditional jump,” I said. “The optimizer can retarget the branch to the jump's destination and bypass the intermediate instruction on that edge.”
 
 “And ordinarily it should. What do we call that?”
 
@@ -134,7 +153,7 @@ Holmes sketched the relevant control flow:
 
 “The optimizer does not move the line event to the new edge,” Holmes said. “It merely retargets the conditional branch from the intermediate jump to the loop body.”
 
-“So the instruction it removes is operationally redundant, but observationally significant.”
+“So the instruction it bypasses is operationally redundant, but observationally significant.”
 
 “Precisely. It performs no necessary control-flow work, yet it is the point at which Ruby promises to report line two.”
 
