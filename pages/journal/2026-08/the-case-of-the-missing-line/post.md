@@ -226,7 +226,44 @@ With that route restored, the original program produced the expected trace:
 
 Holmes raised an eyebrow. “That is an opinion, not a measurement.”
 
-Targeted benchmarks concentrated the affected pattern until nearly every iteration or method call traversed the retained jump. The interpreter slowed by about one percent in a hot loop and 2.7 percent in a minimal guarded reader.
+Targeted benchmarks concentrated the affected pattern until nearly every iteration or method call traversed the retained jump. On an Apple M4 Pro, each result was the median of 9 or 11 samples after 3 warmups:
+
+<table class="basic">
+	<thead>
+		<tr>
+			<th>Targeted benchmark</th>
+			<th>Baseline</th>
+			<th>Patched</th>
+			<th>Change</th>
+		</tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>Hot affected edge, interpreter</td>
+			<td>46.20M iter/s</td>
+			<td>45.74M iter/s</td>
+			<td>−1.0%</td>
+		</tr>
+		<tr>
+			<td>Guarded reader, interpreter</td>
+			<td>30.95M calls/s</td>
+			<td>30.13M calls/s</td>
+			<td>−2.7%</td>
+		</tr>
+		<tr>
+			<td>Guarded reader, YJIT</td>
+			<td>272.56M calls/s</td>
+			<td>272.56M calls/s</td>
+			<td>0.0%</td>
+		</tr>
+		<tr>
+			<td>Guarded reader, ZJIT</td>
+			<td>435.34M calls/s</td>
+			<td>436.89M calls/s</td>
+			<td>+0.4%</td>
+		</tr>
+	</tbody>
+</table>
 
 “Larger than I expected,” I admitted. “Should we accept incorrect tracing to keep the optimization?”
 
