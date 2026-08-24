@@ -46,11 +46,13 @@ end</content:listing>
 	
 	<p><code class="language-ruby">TracePoint</code> allows debuggers, tracers, profilers, and diagnostic tools to observe events inside Ruby execution. A <code class="language-ruby">:line</code> event does not fire for every subexpression. It marks the source lines which Ruby’s compiled instruction sequence identifies as execution points.</p>
 	
+	<p>CRuby compiles Ruby source into YARV instructions. Selected instructions carry event flags which tell the interpreter when to notify TracePoint.</p>
+	
 	<p>“Then perhaps line two simply is not such a point.”</p>
 	
 	<p>“How shall we distinguish a line which was never marked from one whose mark was overlooked?” Holmes asked.</p>
 	
-	<p>“Ask the compiled program,” I replied, and printed its YARV disassembly. The relevant instructions were:</p>
+	<p>“Ask the compiled program,” I replied, and disassembled the original three-line reproduction. The relevant instructions were:</p>
 	
 	<content:listing brush="text">0005 branchunless 15
 ...
@@ -67,20 +69,18 @@ end</content:listing>
 	
 	<p>“Then our evidence was neither absent nor destroyed,” Holmes said. “The program was routed around the place where it would have been reported.”</p>
 	
-	<p>That mapping is part of the tooling contract. Developers rely on it to step through methods, explain which branches ran, and connect runtime behavior to source. Coverage consumes related metadata, but an ordinary TracePoint user does not necessarily enable coverage.</p>
+	<p>That mapping is part of the tooling contract. Developers rely on it to step through methods, explain which branches ran, and connect runtime behavior to source.</p>
 	
-	<p>The question therefore moved down one level: how had the branch acquired a destination beyond the event-bearing jump?</p>
+	<p>“The disassembly shows us the altered route,” Holmes said. “Now let us ask the compiler who altered it.”</p>
 	
 	<h2>Chapter III: The Shortened Route</h2>
 	
-	<p>CRuby compiles Ruby source into YARV instructions. Event flags attached to selected instructions tell the interpreter when to notify TracePoint and Coverage.</p>
-	
-	<p>Holmes sketched the relevant control flow:</p>
+	<p>We found the relevant transformation in CRuby’s peephole optimizer. Holmes sketched the route before and after it retargeted the branch:</p>
 	
 	<figure class="diagram inline-diagram">
 		<svg viewBox="0 0 760 510" role="img" aria-labelledby="missing-line-title missing-line-description">
 			<title id="missing-line-title">Control flow before and after jump-to-jump optimization</title>
-			<desc id="missing-line-description">Before optimization, a conditional branch reaches the loop body through a jump carrying the line event. After optimization, the branch targets the loop body directly and the line event is not transferred.</desc>
+			<desc id="missing-line-description">On the original route, a conditional branch reaches the loop body through a jump carrying the line event. On the retargeted route, the branch targets the loop body directly and the line event is not transferred.</desc>
 			<defs>
 				<marker id="missing-line-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
 					<path class="diagram-marker-accent" d="M 0 0 L 10 5 L 0 10 z" />
@@ -89,7 +89,7 @@ end</content:listing>
 			
 			<rect class="diagram-surface" x="10" y="10" width="740" height="490" rx="24" />
 			
-			<text class="diagram-heading" x="380" y="55">Before optimization</text>
+			<text class="diagram-heading" x="380" y="55">Original route</text>
 			
 			<rect class="diagram-node" x="40" y="90" width="190" height="100" rx="14" />
 			<g class="diagram-copy" transform="translate(135 140)">
@@ -114,7 +114,7 @@ end</content:listing>
 			
 			<path class="diagram-connector" d="M 55 240 L 705 240" style="stroke: var(--diagram-border); opacity: 0.5" />
 			
-			<text class="diagram-heading" x="380" y="295">After optimization</text>
+			<text class="diagram-heading" x="380" y="295">Retargeted route</text>
 			
 			<rect class="diagram-node" x="40" y="330" width="190" height="100" rx="14" />
 			<g class="diagram-copy" transform="translate(135 380)">
@@ -152,7 +152,13 @@ end</content:listing>
 	
 	<h2>Chapter IV: The Coverage Alibi</h2>
 	
-	<p>We enabled line coverage. To my surprise, line two reappeared.</p>
+	<p>“What other witness relies on Ruby’s mapping between execution and source lines?” Holmes asked.</p>
+	
+	<p>“Ruby’s built-in line coverage.”</p>
+	
+	<p>We enabled Coverage and ran the same program. To my surprise, line two reappeared.</p>
+	
+	<p>TracePoint and Coverage use distinct line-event flags, but both depend on event metadata attached to YARV instructions.</p>
 	
 	<p>“Then TracePoint is broken, but Coverage is not?” I asked.</p>
 	
@@ -176,7 +182,11 @@ end</content:listing>
 	
 	<p>“It also asks the interpreter and JITs to understand new metadata,” Holmes replied. “Before adding machinery, what is the smallest rule which preserves the evidence?”</p>
 	
-	<p>The answer was to retain the existing intermediate jump whenever removing it would erase a line event. <a href="https://github.com/ruby/ruby/pull/18122">The merged fix</a> changed the peephole condition to stop this specific retargeting when the skipped instruction carries <code class="language-c">RUBY_EVENT_LINE</code> or <code class="language-c">RUBY_EVENT_COVERAGE_LINE</code>:</p>
+	<p>“Could we simply refuse this retargeting when the intermediate jump carries a line event?” I asked.</p>
+	
+	<p>“Then ordinary jump chains remain folded, and we require no new VM metadata.”</p>
+	
+	<p><a href="https://github.com/ruby/ruby/pull/18122">The merged fix</a> implemented that rule. It stops this specific retargeting when bypassing an instruction carrying <code class="language-c">RUBY_EVENT_LINE</code> or <code class="language-c">RUBY_EVENT_COVERAGE_LINE</code> would suppress the event:</p>
 	
 	<content:listing brush="c">int stop_optimization =
     nobj-&gt;link.type == ISEQ_ELEMENT_INSN &amp;&amp;
