@@ -30,7 +30,7 @@ the-case-of-the-vanishing-fiber:
 
 the-case-of-the-missing-line:
   author: "Samuel Williams"
-  created: 2026-08-02
+  created: 2026-08-24
   title: "The Case of the Missing Line: A Ruby Mystery"
   summary: "Dr. Claude Watson investigates how a bytecode optimization erased an executed loop condition from Ruby's line trace."
   display: true
