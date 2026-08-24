@@ -288,9 +288,9 @@ The guarded-reader results showed no repeatable JIT regression.
 
 The division of responsibility became clear: bytecode remains complete for the interpreter and instrumentation, while a JIT may reorganize machine control flow without discarding promised observations.
 
-“Then the interpreter figures are real but deliberately concentrated upper bounds,” I said, “not an estimate of general application slowdown.”
+“Then we need not choose between correct tracing and performance,” I said.
 
-“Precisely. Neither hide the cost nor exaggerate its reach.”
+“Not with a JIT. Preserve the evidence in bytecode; optimize the redundant jump in machine code.”
 
 ## Chapter VII: Testing the Witness, Not Merely the Result
 
