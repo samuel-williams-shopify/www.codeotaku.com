@@ -34,46 +34,49 @@ Async uses that facility so a signal requests cancellation without tearing throu
 
 “Precisely. The scheduler must continue running until it reaches the boundary where delivery is allowed.”
 
-An earlier inconsistency had complicated this design: CRuby's default <code class="language-plain">SIGINT</code> path raised <code class="language-ruby">Interrupt</code> directly instead of using that queue. [Bug #22133](https://bugs.ruby-lang.org/issues/22133) and [the corresponding Ruby fix](https://github.com/ruby/ruby/pull/17533) made the default signal respect <code class="language-ruby">Thread.handle_interrupt</code> like other asynchronous exceptions.
+“But had the default <code class="language-plain">SIGINT</code> always entered that queue?” Holmes asked.
 
-That gave us predictable deferral. It also made the selector's responsibility clearer: a masked exception need not raise immediately, but it must prevent the scheduler from sleeping past the opportunity to handle it.
+It had not. CRuby's default signal path raised <code class="language-ruby">Interrupt</code> directly, allowing it to break through a <code class="language-ruby">Thread.handle_interrupt</code> mask. [Bug #22133](https://bugs.ruby-lang.org/issues/22133) and [the corresponding Ruby fix](https://github.com/ruby/ruby/pull/17533) routed the default signal through the pending-interrupt queue instead.
+
+After that correction, <code class="language-plain">SIGINT</code> could be deferred consistently. In our delayed worker, the exception was waiting exactly where Ruby promised. That exposed the next question: how had the selector gone to sleep while it was pending?
 
 ## Chapter III: The Sensible Check
 
 Event selectors such as <code class="language-plain">kqueue</code>, <code class="language-plain">epoll</code>, and <code class="language-plain">io_uring</code> may wait in the kernel without a timeout. CRuby releases the Global VM Lock around that wait so other Ruby threads can run.
 
-On older Ruby versions, <code class="language-ruby">IO::Event</code> checked for a queued exception before entering the native wait:
+On older Ruby versions, <code class="language-ruby">IO::Event</code> used a separate Ruby-level query before entering the native wait. Conceptually, the guard was:
 
 ```ruby
-return unless Thread.pending_interrupt?
+return if Thread.pending_interrupt?
 ```
 
 “That appears sufficient,” I said. “If an interrupt is pending, do not sleep. Otherwise, sleep.”
 
-Holmes wrote the operations separately:
+Before examining the sequence, Holmes identified the unblock function: a callback CRuby installs so an interrupt arriving after a native operation begins can wake it. He then wrote the operations separately:
 
 ```text
-check Ruby's pending-interrupt queue
+ask Ruby whether the pending-interrupt queue is empty
+begin rb_thread_call_without_gvl2
+check VM interrupt state and install the unblock function
 release the GVL
-install the native unblock function
 enter kevent/epoll/io_uring wait
 ```
 
 “At which line does this become one indivisible decision?” he asked.
 
-It did not. A signal could arrive after <code class="language-ruby">Thread.pending_interrupt?</code> returned false but while Ruby was entering the no-GVL region. Ruby would process the signal, place the masked exception in the pending queue, and continue the transition.
+It did not. A signal could arrive after <code class="language-ruby">Thread.pending_interrupt?</code> returned false but while Ruby was entering the no-GVL region. The outer mask deferred the exception into the pending queue. Once Ruby had processed that state, the VM interrupt flag could be cleared even though the exception remained queued.
 
 “But the signal should interrupt <code class="language-plain">kevent</code>,” I objected.
 
-“Only if the native wait has begun, or Ruby has installed the unblock function which can wake it. What if the signal is handled in the interval before either is true?”
+“Only if the native wait has begun. The unblock function protects an interrupt which arrives after it is installed; it cannot replay a signal Ruby has already handled.”
 
-The exception could become pending too late for the preliminary check and too early to wake the native operation. The selector would then enter a wait with no second operating-system signal guaranteed to disturb it.
+The preliminary answer was now stale, while the no-GVL transition could see no active VM interrupt. It installed the unblock function and entered the wait, but no second operating-system signal was guaranteed to invoke it.
 
 ## Chapter IV: Catching the Interval
 
 Our first attempts to observe the race changed its timing. Holmes reduced the experiment to many short Falcon worker lifecycles: complete one request, send <code class="language-plain">SIGINT</code>, and record any worker which did not leave promptly.
 
-Native instrumentation eventually captured the ordering on the compatibility path:
+Native instrumentation eventually captured the ordering on the older-Ruby path:
 
 ```text
 pending-interrupt check: false
@@ -96,15 +99,15 @@ We tried it. Across 2,000 iterations, the delay still appeared. Ruby could proce
 
 “Then <code class="language-ruby">IO::Event</code> needs to hold a lock around its check and the no-GVL transition,” I proposed.
 
-“Which lock protects Ruby's pending-interrupt queue and the installation of its unblock function?”
+“Can an extension hold the GVL while also participating in Ruby's interrupt-lock protocol?”
 
-That state belonged to CRuby. An extension could ask whether an interrupt was pending, but it could not safely make that query atomic with Ruby's internal transition.
+That transition belonged to CRuby. An extension could ask whether an interrupt was pending, but it could not safely make that query part of Ruby's internal move into a blocking region.
 
 The solution was therefore a Ruby C API rather than another selector-side check. [The new <code class="language-c">RB_NOGVL_PENDING_INTR_FAIL</code> flag](https://github.com/ruby/ruby/pull/17553) extends <code class="language-c">rb_nogvl</code> with a precise contract: if the current thread already has pending interrupts, including masked ones, do not invoke the native blocking callback.
 
 “So Ruby itself performs the test while entering the blocking region,” I said.
 
-“Yes. It can coordinate the pending queue and the unblock function under the lock which governs both.”
+“Yes. Ruby checks the pending queue while it still holds the GVL. Its existing interrupt-lock protocol then either observes a VM interrupt or installs the unblock function before releasing the GVL.”
 
 Instrumentation on Ruby with the new flag caught the same timing without entering the native wait:
 
@@ -155,11 +158,11 @@ The revised implementation survived a hundred iterations without delay.
 
 We kept the original shutdown shape and multiplied the opportunities for the signal to strike the transition. The compatibility implementation completed 2,000 iterations with two workers per iteration and no delayed worker dumps or shutdown failures. Focused selector tests covered interrupts pending before a wait and arriving during it.
 
-A KQueue benchmark found no measurable latency change. The older-Ruby fallback does allocate one internal object for each genuinely blocking wait; Ruby with the native flag retains the direct path. That is a concrete compatibility cost, rather than a claim that the workaround is free.
+A KQueue benchmark on Ruby 4.0.5 measured 27.152 microseconds per wait for the baseline and 27.128 for the fallback, a difference of −0.09 percent and well within noise. The older-Ruby fallback does allocate one internal object for each genuinely blocking wait; Ruby with the native flag retains the direct path.
 
-“And we should not say the worker previously waited forever,” I added. “The supervisor would escalate to <code class="language-plain">SIGKILL</code>.”
+“The compatibility path closes the race on released Rubies,” I said, “and the benchmark found no measurable latency penalty.”
 
-“Correct. State the result at its proper scale: an obscure race could delay graceful shutdown until escalation. The fix makes the intended cleanup path reliable.”
+“While future Ruby can enforce the same rule directly at the doorway.”
 
 ## Epilogue: State and Sleep Must Agree
 
