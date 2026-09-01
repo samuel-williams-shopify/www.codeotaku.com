@@ -62,14 +62,23 @@ return if Thread.pending_interrupt?
 
 “That appears sufficient,” I said. “If an interrupt is pending, do not sleep. Otherwise, sleep.”
 
-Before examining the sequence, Holmes identified the unblock function: a callback CRuby installs so an interrupt arriving after a native operation begins can wake it. He then wrote the operations separately:
+Before examining the sequence, Holmes identified the unblock function: a callback CRuby installs so an interrupt arriving after a native operation begins can wake it. He translated the transition into conceptual Ruby pseudocode:
 
-```text
-ask Ruby whether the pending-interrupt queue is empty
-begin rb_thread_call_without_gvl2
-check VM interrupt state and install the unblock function
-release the GVL
-enter kevent/epoll/io_uring wait
+```ruby
+# IO::Event, while holding the GVL:
+return if Thread.pending_interrupt?
+
+# Inside rb_thread_call_without_gvl2:
+check_vm_interrupt_state
+
+interrupt_lock.synchronize do
+	install_unblock_function {selector.wake}
+end
+
+release_gvl
+
+# IO::Event's native callback:
+selector.wait(timeout: nil)
 ```
 
 “At which line does this become one indivisible decision?” he asked.
