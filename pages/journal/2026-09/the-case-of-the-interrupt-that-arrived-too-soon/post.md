@@ -6,19 +6,29 @@
 
 ## Chapter I: The Worker Which Missed Its Cue
 
-The Falcon worker had completed its request when the supervisor sent <code class="language-plain">SIGINT</code>, beginning the normal graceful-shutdown sequence. One worker cleaned up and exited. Another remained inside its event selector until the supervisor's later escalation ended it.
+[Falcon's new Cluster service](https://github.com/socketry/falcon/pull/356) allows each worker to bind its own listener and operate as an independently discoverable backend. While reviewing that work, we ran a focused lifecycle test: start two workers, complete a request, and stop the cluster.
 
-“The worker ignored the signal,” I declared.
+“The test passed,” I said.
 
-Holmes turned from the terminal. “What evidence would distinguish an ignored signal from a received signal awaiting delivery?”
+“How long did it take?”
 
-The backtrace placed the delayed worker inside <code class="language-ruby">IO::Event::Selector::KQueue#select</code>. We sent a separate diagnostic signal to obtain another dump. The native wait returned, Ruby immediately noticed an already-pending <code class="language-ruby">Interrupt</code>, and the worker followed its cleanup path.
+I examined the timing. “More than ten seconds.”
+
+The logs showed that the supervisor had sent <code class="language-plain">SIGINT</code> to both workers. One logged <code class="language-plain">Scheduler interrupted</code>, cleaned up, and exited. The other remained alive until the grace period expired and the supervisor escalated to <code class="language-plain">SIGKILL</code>. The assertions had passed without noticing that shutdown was forced.
+
+“The new cluster service has broken shutdown,” I concluded.
+
+“Perhaps,” Holmes replied. “Or perhaps two workers have merely given an older fault another opportunity to reveal itself.”
+
+We built a stress reproduction around the same completed-request sequence. Request processing had finished before shutdown, yet nine of one hundred runs still killed exactly one worker while its sibling exited normally.
+
+Shortly before escalation, the harness sent <code class="language-plain">SIGUSR1</code> to capture the delayed worker's stack. The backtrace placed it inside <code class="language-ruby">IO::Event::Selector::KQueue#select</code>. The diagnostic signal also released the native wait; Ruby immediately noticed an already-pending <code class="language-ruby">Interrupt</code>, and the worker followed its cleanup path.
 
 “Then <code class="language-plain">SIGINT</code> was not lost,” I said. “Ruby had remembered it.”
 
 “But the thread went to sleep before it could act upon that memory.”
 
-This was not a general failure of Falcon shutdown. It was an intermittent delay which required a signal to land during a very small transition inside the event loop. Under a typical supervisor the worker would eventually receive <code class="language-plain">SIGKILL</code>; the mystery was why it occasionally missed the graceful path.
+The cluster work had exposed the failure, but the evidence now pointed below Falcon's request lifecycle. The mystery was how a graceful-shutdown interrupt could already be pending while the event selector remained asleep.
 
 ## Chapter II: Why Not Raise Immediately?
 
@@ -74,7 +84,7 @@ The preliminary answer was now stale, while the no-GVL transition could see no a
 
 ## Chapter IV: Catching the Interval
 
-Our first attempts to observe the race changed its timing. Holmes reduced the experiment to many short Falcon worker lifecycles: complete one request, send <code class="language-plain">SIGINT</code>, and record any worker which did not leave promptly.
+The stress harness showed us where the worker stopped, but not how it crossed from a pending interrupt into the native wait. Ordinary logging changed the timing, so we instrumented the selector and Ruby's no-GVL transition instead.
 
 Native instrumentation eventually captured the ordering on the older-Ruby path:
 
