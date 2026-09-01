@@ -175,15 +175,7 @@ selector.wait(timeout: nil)
 
 When either pending-interrupt check fails, <code class="language-c">rb_nogvl</code> returns <code class="language-c">0</code> without invoking the selector callback and leaves <code class="language-c">errno</code> as zero. It does not report <code class="language-c">EINTR</code>, because no system call began and nothing was interrupted.
 
-Instrumentation on Ruby with the new flag caught the same timing without entering the native wait:
-
-```text
-before transition: no pending interrupt
-signal SIGINT
-after transition: callback not entered, interrupt pending
-```
-
-Control returned to <code class="language-ruby">IO::Event</code> without calling the selector. The surrounding <code class="language-ruby">Thread.handle_interrupt</code> mask still decided when the exception could be raised; the new flag prevented deferral from becoming accidental sleep.
+With the new flag, the same timing followed a different path. If <code class="language-plain">SIGINT</code> entered the pending queue during the transition, Ruby detected it before releasing the GVL and returned without invoking the selector callback. The surrounding <code class="language-ruby">Thread.handle_interrupt</code> mask still decided when the exception could be raised; the new flag prevented deferral from becoming accidental sleep.
 
 ## Chapter VI: The Older-Ruby Problem
 
