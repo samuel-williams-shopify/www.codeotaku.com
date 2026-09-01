@@ -221,7 +221,7 @@ selector.wait(timeout: nil)</content:listing>
 	
 	<p>Holmes folded the timing trace and placed it in the casebook.</p>
 	
-	<p>“The interrupt did not arrive too late, Watson. It arrived between deciding to sleep and arranging to be woken.”</p>
+	<p>“The interrupt did not arrive too late, Watson. It arrived too soon—between deciding to sleep and arranging to be woken.”</p>
 	
 	<p><em>End of Account</em></p>
 	

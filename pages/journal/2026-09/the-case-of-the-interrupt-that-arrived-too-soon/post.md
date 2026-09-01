@@ -232,7 +232,7 @@ Whenever one thread decides whether it is safe to sleep while another can publis
 
 Holmes folded the timing trace and placed it in the casebook.
 
-“The interrupt did not arrive too late, Watson. It arrived between deciding to sleep and arranging to be woken.”
+“The interrupt did not arrive too late, Watson. It arrived too soon—between deciding to sleep and arranging to be woken.”
 
 *End of Account*
 
