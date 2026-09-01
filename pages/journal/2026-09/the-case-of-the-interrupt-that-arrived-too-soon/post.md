@@ -126,7 +126,54 @@ The solution was therefore a Ruby C API rather than another selector-side check.
 
 “So Ruby itself performs the test while entering the blocking region,” I said.
 
-“Yes. Ruby checks the pending queue while it still holds the GVL. Its existing interrupt-lock protocol then either observes a VM interrupt or installs the unblock function before releasing the GVL.”
+“Yes. But the pending queue and the VM interrupt flag are distinct evidence. Ruby must account for both before it commits to sleep.”
+
+Holmes set the old and new transitions beside one another. In simplified Ruby-like pseudocode, <code class="language-c">rb_thread_call_without_gvl2</code> had entered the blocking region like this:
+
+```ruby
+check_vm_interrupt_state
+
+interrupt_lock.synchronize do
+	install_unblock_function {selector.wake}
+end
+
+release_gvl
+selector.wait(timeout: nil)
+```
+
+With <code class="language-c">RB_NOGVL_PENDING_INTR_FAIL</code>, <code class="language-c">rb_nogvl</code> also examines the pending-exception queue while it still holds the GVL:
+
+```ruby
+if pending_interrupt?
+	set_errno(0)
+	return nil
+end
+
+loop do
+	return nil if vm_interrupt?
+	return nil if pending_interrupt?
+
+	interrupt_lock.lock
+
+	if vm_interrupt?
+		interrupt_lock.unlock
+		next
+	end
+
+	install_unblock_function {selector.wake}
+	interrupt_lock.unlock
+	break
+end
+
+release_gvl
+selector.wait(timeout: nil)
+```
+
+“The second pending check is inside the guarded transition,” I observed.
+
+“And the loop closes the remaining interval. If a VM interrupt appears while Ruby acquires the interrupt lock, it retries instead of installing the unblock function from stale state.”
+
+When either pending-interrupt check fails, <code class="language-c">rb_nogvl</code> returns <code class="language-c">0</code> without invoking the selector callback and leaves <code class="language-c">errno</code> as zero. It does not report <code class="language-c">EINTR</code>, because no system call began and nothing was interrupted.
 
 Instrumentation on Ruby with the new flag caught the same timing without entering the native wait:
 
@@ -136,7 +183,7 @@ signal SIGINT
 after transition: callback not entered, interrupt pending
 ```
 
-The selector returned control to Ruby. The surrounding <code class="language-ruby">Thread.handle_interrupt</code> mask still decided when the exception could be raised; the new flag prevented deferral from becoming accidental sleep.
+Control returned to <code class="language-ruby">IO::Event</code> without calling the selector. The surrounding <code class="language-ruby">Thread.handle_interrupt</code> mask still decided when the exception could be raised; the new flag prevented deferral from becoming accidental sleep.
 
 ## Chapter VI: The Older-Ruby Problem
 
